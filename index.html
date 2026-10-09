@@ -236,6 +236,10 @@ function packet(r){
   if(!r) return "No candles loaded.";
   const etf=[...document.querySelectorAll(".etf")].map(el=>Number(el.value)||0);
   const lines=[];
+  lines.push("You are reading a BTC spot swing snapshot from Sweep Desk. Analyze only the numbers below. Do not invent orders, prices, or flows.");
+  lines.push("Rules: horizon is 3 to 15 days. A long is allowed only if a low was swept, a 4-hour candle closed back above that pool, and an up displacement printed. Buy the retest, not the wick. A short call is not a spot order. It means do not buy, and reduce an existing long. A finished short needs a high swept, a close back below it, and down displacement. SHORT BIAS means a low broke and was not reclaimed. Two completed ETF outflow sessions lean short. Two inflow sessions lean long. Funding above 0.03% per 8 hours blocks a fresh long. Funding below -0.03% blocks a fresh short.");
+  lines.push("Reply with: the call, why it is or is not valid, the spot action, the level that invalidates it, and what must print next. Keep it under 150 words.");
+  lines.push("");
   lines.push("BTC Sweep Desk snapshot");
   lines.push("As of: "+data.asof+" | "+data.source);
   lines.push("Last price: "+r.price);
