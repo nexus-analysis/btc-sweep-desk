@@ -54,7 +54,10 @@
       <p id="why">Loading candles…</p>
       <div class="spot" id="spot"></div>
     </div>
-    <button id="refresh">Refresh candles</button>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <button id="refresh">Refresh candles</button>
+      <button id="copy">Copy metrics</button>
+    </div>
   </div>
   <section>
     <h2>Regime inputs</h2>
@@ -191,7 +194,41 @@ async function load(){
 }
 document.getElementById("funding").addEventListener("input", render);
 document.getElementById("oi").addEventListener("input", render);
+function packet(r){
+  if(!r) return "No candles loaded.";
+  const etf=[...document.querySelectorAll(".etf")].map(el=>Number(el.value)||0);
+  const lines=[];
+  lines.push("BTC Sweep Desk snapshot");
+  lines.push("As of: "+data.asof+" | "+data.source);
+  lines.push("Last price: "+r.price);
+  lines.push("Call: "+r.call);
+  lines.push("Reason: "+r.why);
+  lines.push("Spot action: "+r.spot+" "+r.action);
+  lines.push("Funding % per 8h: "+r.funding);
+  lines.push("Open interest 24h change %: "+r.oi);
+  lines.push("ETF flows $m, oldest to newest: "+etf.join(", "));
+  lines.push("5-session ETF net $m: "+r.five.toFixed(1));
+  lines.push("Two-day outflows: "+r.outflows+" | two-day inflows: "+r.inflows);
+  lines.push("Session low: "+r.sessionLow+" | session high: "+r.sessionHigh);
+  lines.push("Up displacement: "+r.upDisp+" | down displacement: "+r.dnDisp);
+  lines.push("Active pool: "+(r.active?r.active.name+" "+r.active.price+" "+r.active.state:"none"));
+  lines.push("Pools:");
+  [...r.lowStates,...r.highStates].forEach(s=>lines.push("- "+s.name+" "+s.price+" | "+s.state+" | depth "+(s.depth*100).toFixed(2)+"%"));
+  lines.push("Last 8 daily candles, time open high low close:");
+  data.daily.slice(-8).forEach(c=>lines.push(new Date(c[0]).toISOString().slice(0,10)+" "+c[1]+" "+c[2]+" "+c[3]+" "+c[4]));
+  lines.push("Last 6 four-hour candles, time open high low close:");
+  data.h4.slice(-6).forEach(c=>lines.push(new Date(c[0]).toISOString().slice(0,16)+" "+c[1]+" "+c[2]+" "+c[3]+" "+c[4]));
+  lines.push("Account: spot only. A short call means do not buy, or reduce an existing long. Do not invent orders.");
+  return lines.join("\n");
+}
 document.getElementById("refresh").onclick=()=>load().catch(()=>{ document.getElementById("asof").textContent="OKX blocked in this browser."; });
+document.getElementById("copy").onclick=async()=>{
+  const r=render();
+  const text=packet(r);
+  try { await navigator.clipboard.writeText(text); document.getElementById("copy").textContent="Copied"; }
+  catch(e){ const box=document.getElementById("note"); box.value=text; box.select(); document.execCommand("copy"); document.getElementById("copy").textContent="Copied"; }
+  setTimeout(()=>{ document.getElementById("copy").textContent="Copy metrics"; }, 1400);
+};
 document.getElementById("save").onclick=()=>{ const r=render(); const line=`${new Date().toISOString().slice(0,16)} | ${r?r.call:"—"} | ${document.getElementById("note").value.trim()}`; localStorage.setItem("sweepdesk-log",(line+"\n"+(localStorage.getItem("sweepdesk-log")||"")).trim()); document.getElementById("note").value=""; document.getElementById("log").textContent=localStorage.getItem("sweepdesk-log"); };
 document.getElementById("clear").onclick=()=>{ localStorage.removeItem("sweepdesk-log"); document.getElementById("log").textContent="No lines yet."; };
 document.getElementById("log").textContent=localStorage.getItem("sweepdesk-log")||"No lines yet.";
