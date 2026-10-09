@@ -43,7 +43,7 @@
 <header>
   <div>
     <h1>Sweep Desk</h1>
-    <div class="sub">Sweep Desk v0.6 · Binance BTCUSDT · refreshes itself every 5 minutes. Price is the 4-hour close.</div>
+    <div class="sub">Sweep Desk v0.7 · Binance BTCUSDT only. Refreshes every 5 minutes. A number not fetched this pass is not live.</div>
   </div>
   <div class="price"><b id="px">—</b><div class="sub" id="asof">loading</div><div class="sub" id="next">next close —</div></div>
 </header>
@@ -66,7 +66,7 @@
     <input id="funding" type="number" step="0.0001" value="" placeholder="loading"/>
     <label>Open interest, 24h change %</label>
     <input id="oi" type="number" step="0.1" value="" placeholder="loading"/>
-    <p class="note">ETF in US$ millions, Farside, last completed US session. Filled automatically. Edit only if a print is revised.</p>
+    <p class="note" id="etfnote">ETF is not used unless Farside loads on this pass. A seed is not a print.</p>
   </section>
   <section>
     <h2>4-hour chart</h2>
@@ -89,7 +89,7 @@
 </main>
 <script>
 const CFG = { SWEEP:0.003, COLLAPSE:0.0015, EQUAL:0.005, FUND:0.03, DISP:1.2 };
-let data = { source:"Binance BTCUSDT", asof:"", daily:[], h4:[], etf:[["02 Oct",189.9],["05 Oct",-89.8],["06 Oct",118.8],["07 Oct",-484.9],["08 Oct",-244.1]] };
+let data = { source:"Binance BTCUSDT", asof:"", daily:[], h4:[], etfLive:false, etf:[] };
 function money(n){ return Math.round(n).toLocaleString("en-US"); }
 function swings(candles, side){
   const out=[], idx=side==="low"?3:2;
@@ -155,9 +155,10 @@ function analyze(){
   lows=dedupe(lows); highs=dedupe(highs);
   const lowStates=lows.map(p=>mark(p,"low",sessionLow,price,a)), highStates=highs.map(p=>mark(p,"high",sessionHigh,price,a));
   const upDisp=displaced(h4,"up",sweepTs), dnDisp=displaced(h4,"down",sweepTs);
-  const etf=[...document.querySelectorAll(".etf")].map(el=>Number(el.value)||0);
-  const lastTwo=etf.slice(-2), outflows=lastTwo.length===2&&lastTwo.every(v=>v<0), inflows=lastTwo.length===2&&lastTwo.every(v=>v>0);
-  const five=etf.slice(-5).reduce((s,v)=>s+v,0);
+  const etf=[...document.querySelectorAll(".etf")].map(el=>el.value===""?null:Number(el.value)).filter(v=>v!==null&&!Number.isNaN(v));
+  const etfLive=data.etfLive && etf.length>=2;
+  const lastTwo=etf.slice(-2), outflows=etfLive&&lastTwo.length===2&&lastTwo.every(v=>v<0), inflows=etfLive&&lastTwo.length===2&&lastTwo.every(v=>v>0);
+  const five=etfLive?etf.slice(-5).reduce((s,v)=>s+v,0):null;
   const fundingRaw=document.getElementById("funding").value, oiRaw=document.getElementById("oi").value;
   const funding=fundingRaw===""?null:Number(fundingRaw), oi=oiRaw===""?null:Number(oiRaw);
   const fundingOk=funding!==null && funding<CFG.FUND, fundingShortOk=funding!==null && funding>-CFG.FUND;
@@ -173,7 +174,7 @@ function analyze(){
   const shortBroken=weekHighBroken||highStates.find(s=>s.swept&&!s.reclaimed);
   let call="FLAT", tone="flat", why="No pool has been swept. Location only.", spot="Spot: nothing to do.", action="Mark equal lows and equal highs. Alert just beyond them.", active=longBroken||shortBroken||longReady||shortReady;
   if(longReady&&upDisp&&!outflows&&fundingOk&&buyers){
-    call=five<0?"LONG · HALF":"LONG"; tone="long"; why="Sell-side pool swept and reclaimed on a 4-hour close, with up displacement, spot taker buy since the sweep, and no wider low still broken."; spot="Spot: long is allowed."; action="Limit buy on the first retest. Stop beyond the sweep low. Risk 0.5%, or 0.25% if five-day ETF flow is negative or funding is not live."; active=longReady;
+    call=five!==null&&five<0?"LONG · HALF":"LONG"; tone="long"; why="Sell-side pool swept and reclaimed on a 4-hour close, with up displacement, spot taker buy since the sweep, and no wider low still broken."; spot="Spot: long is allowed."; action="Limit buy on the first retest. Stop beyond the sweep low. Risk 0.5%, or 0.25% if five-day ETF flow is negative or funding is not live."; active=longReady;
   } else if(longReady&&upDisp&&!outflows&&(funding===null||!buyers)){
     call="LONG · HALF"; tone="long"; why="Structure is long, but "+(funding===null?"funding is not live":"taker buy since the sweep is not positive")+". Half size only. Two-day ETF outflows still block this."; spot="Spot: half size only, on the retest."; action="Do not full-size. If funding stays missing or taker delta stays negative, skip."; active=longReady;
   } else if(shortReady&&dnDisp&&!inflows&&fundingShortOk){
@@ -185,7 +186,7 @@ function analyze(){
   } else if(longReady||shortReady){
     why="A sweep reclaimed, but displacement or the flow filter is missing."; spot="Spot: wait."; action="No order until the displacement candle prints in the reversal direction."; active=longReady||shortReady;
   }
-  return {price, sessionLow, sessionHigh, lowStates, highStates, call, tone, why, spot, action, active, outflows, inflows, five, funding, oi, upDisp, dnDisp, fundingLive:funding!==null, oiLive:oi!==null, delta, buyers};
+  return {price, sessionLow, sessionHigh, lowStates, highStates, call, tone, why, spot, action, active, outflows, inflows, five, funding, oi, upDisp, dnDisp, fundingLive:funding!==null, oiLive:oi!==null, delta, buyers, etfLive};
 }
 function draw(r){
   const c=document.getElementById("chart"), g=c.getContext("2d"), w=c.width, h=c.height;
@@ -203,14 +204,14 @@ function render(){
   if(!r){ document.getElementById("why").textContent="No candles yet."; return null; }
   document.getElementById("px").textContent="$"+money(r.price);
   const age=data.h4.length?Date.now()-data.h4.at(-1)[0]:0;
-  document.getElementById("asof").textContent=data.asof+" · "+data.source+(age>5*3600000?" · STALE":"")+" · v0.5";
+  document.getElementById("asof").textContent=data.asof+" · "+data.source+(age>5*3600000?" · STALE":"")+(data.etfLive?" · ETF live":" · ETF not live")+" · v0.7";
   document.getElementById("banner").className="banner "+r.tone;
   document.getElementById("call").textContent=r.call;
   document.getElementById("why").textContent=r.why;
   document.getElementById("spot").textContent=r.spot;
   document.getElementById("action").textContent=r.action;
   document.getElementById("levels").innerHTML=[...r.lowStates,...r.highStates].map(s=>`<tr><td>${s.name}</td><td>${money(s.price)}</td><td class="${s.state.includes("reclaimed")?"ok":s.state.includes("broken")?"no":"mid"}">${s.state}${s.swept?" · "+(s.depth*100).toFixed(2)+"%":""}</td></tr>`).join("")+`<tr><td>Session low / high</td><td>${money(r.sessionLow)} / ${money(r.sessionHigh)}</td><td>extremes</td></tr>`;
-  const checks=[["Two-day ETF outflows", r.outflows?"yes — short lean":"no", !r.outflows],["Two-day ETF inflows", r.inflows?"yes — long lean":"no", r.inflows],["5-session ETF net",(r.five>=0?"+":"")+r.five.toFixed(1)+"M", r.five>=0],["Funding", r.fundingLive?r.funding.toFixed(4)+"%":"not live", r.fundingLive&&Math.abs(r.funding)<0.03],["Low swept and reclaimed", r.lowStates.some(s=>s.swept&&s.reclaimed)?"yes":"no", r.lowStates.some(s=>s.swept&&s.reclaimed)],["High swept and reclaimed", r.highStates.some(s=>s.swept&&s.reclaimed)?"yes":"no", r.highStates.some(s=>s.swept&&s.reclaimed)],["Up displacement", r.upDisp?"yes":"no", r.upDisp],["Down displacement", r.dnDisp?"yes":"no", r.dnDisp]];
+  const checks=[["Two-day ETF outflows", r.outflows?"yes — short lean":"no", !r.outflows],["Two-day ETF inflows", r.inflows?"yes — long lean":"no", r.inflows],["5-session ETF net", r.etfLive?(r.five>=0?"+":"")+r.five.toFixed(1)+"M":"not live", r.etfLive&&r.five>=0],["Funding", r.fundingLive?r.funding.toFixed(4)+"%":"not live", r.fundingLive&&Math.abs(r.funding)<0.03],["Low swept and reclaimed", r.lowStates.some(s=>s.swept&&s.reclaimed)?"yes":"no", r.lowStates.some(s=>s.swept&&s.reclaimed)],["High swept and reclaimed", r.highStates.some(s=>s.swept&&s.reclaimed)?"yes":"no", r.highStates.some(s=>s.swept&&s.reclaimed)],["Up displacement", r.upDisp?"yes":"no", r.upDisp],["Down displacement", r.dnDisp?"yes":"no", r.dnDisp]];
   document.getElementById("checks").innerHTML=checks.map(([k,v,ok])=>`<li><b class="${ok?"ok":"no"}">${v}</b> — ${k}</li>`).join("");
   draw(r); return r;
 }
@@ -233,49 +234,42 @@ function parseFarside(html){
   return rows.slice(-5);
 }
 async function loadFlows(){
+  document.getElementById("funding").value="";
+  document.getElementById("oi").value="";
+  data.etfLive=false;
   try{
     const fr=await fetch("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT").then(r=>r.json());
-    document.getElementById("funding").value=(Number(fr.lastFundingRate)*100).toFixed(4);
-    data.source="Binance spot + funding";
-  }catch(e){
-    try{
-      const fr=await fetch("https://www.okx.com/api/v5/public/funding-rate?instId=BTC-USDT-SWAP").then(r=>r.json());
-      document.getElementById("funding").value=(Number(fr.data[0].fundingRate)*100).toFixed(4);
-      data.source="Binance spot, OKX funding";
-    }catch(err){}
-  }
+    if(fr&&fr.lastFundingRate!=null){
+      document.getElementById("funding").value=(Number(fr.lastFundingRate)*100).toFixed(4);
+      data.source="Binance spot + funding";
+    }
+  }catch(e){}
   try{
     const rows=await fetch("https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1h&limit=25").then(r=>r.json());
     if(Array.isArray(rows)&&rows.length>24){
       const now=Number(rows.at(-1).sumOpenInterest), then=Number(rows[0].sumOpenInterest);
-      document.getElementById("oi").value=(((now-then)/then)*100).toFixed(2);
+      if(then) document.getElementById("oi").value=(((now-then)/then)*100).toFixed(2);
     }
-  }catch(e){
-    try{
-      const oi=await fetch("https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-history?instId=BTC-USDT-SWAP&period=1H").then(r=>r.json());
-      const rows=oi.data||[];
-      if(rows.length>24){
-        const now=Number(rows[0][1]), then=Number(rows[24][1]);
-        document.getElementById("oi").value=(((now-then)/then)*100).toFixed(2);
-      }
-    }catch(err){}
-  }
+  }catch(e){}
   try{
     const raw=await fetch("https://api.allorigins.win/raw?url="+encodeURIComponent("https://farside.co.uk/btc/")).then(r=>r.text());
     const rows=parseFarside(raw);
-    if(rows.length>=5){
+    if(rows.length>=5 && rows.every(r=>Number.isFinite(r[1]))){
       data.etf=rows;
+      data.etfLive=true;
       etfForm();
-      document.getElementById("asof").textContent=(document.getElementById("asof").textContent||"")+" · ETF live";
     }
   }catch(e){}
+  const note=document.getElementById("etfnote");
+  if(note) note.textContent=data.etfLive?"ETF loaded from Farside on this pass.":"ETF not live. It is not filtering the call.";
 }
 async function load(){
   const [h,d]=await Promise.all([
     fetch("https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=4h&limit=160").then(r=>r.json()),
     fetch("https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=90").then(r=>r.json())
   ]);
-  const map=rows=>rows.map(r=>[+r[0],+r[1],+r[2],+r[3],+r[4],+r[5],+r[9]]);
+  if(!Array.isArray(h)||!Array.isArray(d)||h.length<20||d.length<20) throw new Error("bad candles");
+  const map=rows=>rows.map(r=>[+r[0],+r[1],+r[2],+r[3],+r[4],+r[5], r[9]==null?null:+r[9]]);
   data={...data, h4:map(h), daily:map(d), asof:new Date().toISOString().slice(0,16)+" UTC", source:"Binance spot"};
   await loadFlows();
   render();
@@ -287,7 +281,7 @@ function packet(r){
   const etf=[...document.querySelectorAll(".etf")].map(el=>Number(el.value)||0);
   const lines=[];
   lines.push("You are reading a BTC spot swing snapshot from Sweep Desk. Analyze only the numbers below. Do not invent orders, prices, or flows.");
-  lines.push("Rules: horizon is 3 to 15 days. A long is allowed only if a low was swept, a 4-hour candle closed back above that pool, up displacement printed, and taker buy since the sweep is positive. Buy the retest, not the wick. If any week low is broken and not reclaimed, the answer cannot be LONG or LONG HALF. It must be SHORT BIAS or FLAT. A short call is not a spot order. It means do not buy, and reduce an existing long. Two completed ETF outflow sessions block a new long. Funding above 0.03% per 8 hours blocks a fresh long. If funding says not live, do not give full size.");
+  lines.push("Rules: horizon is 3 to 15 days. A long is allowed only if a low was swept, a 4-hour candle closed back above that pool, up displacement printed, and taker buy since the sweep is positive. Buy the retest, not the wick. If any week low is broken and not reclaimed, the answer cannot be LONG or LONG HALF. It must be SHORT BIAS or FLAT. A short call is not a spot order. It means do not buy, and reduce an existing long. Two completed ETF outflow sessions block a new long. Funding above 0.03% per 8 hours blocks a fresh long. If funding or ETF says not live, those filters are off. Do not invent a funding rate or an ETF print.");
   lines.push("Reply with: the call, why it is or is not valid, the spot action, the level that invalidates it, and what must print next. Keep it under 150 words.");
   lines.push("");
   lines.push("BTC Sweep Desk snapshot");
@@ -296,10 +290,10 @@ function packet(r){
   lines.push("Call: "+r.call);
   lines.push("Reason: "+r.why);
   lines.push("Spot action: "+r.spot+" "+r.action);
-  lines.push("Funding % per 8h: "+r.funding);
-  lines.push("Open interest 24h change %: "+r.oi);
-  lines.push("ETF flows $m, oldest to newest: "+etf.join(", "));
-  lines.push("5-session ETF net $m: "+r.five.toFixed(1));
+  lines.push("Funding % per 8h: "+(r.fundingLive?r.funding:"not live"));
+  lines.push("Open interest 24h change %: "+(r.oiLive?r.oi:"not live"));
+  lines.push("ETF flows $m, oldest to newest: "+(r.etfLive?etf.join(", "):"not live"));
+  lines.push("5-session ETF net $m: "+(r.etfLive?r.five.toFixed(1):"not live"));
   lines.push("Two-day outflows: "+r.outflows+" | two-day inflows: "+r.inflows);
   lines.push("Session low: "+r.sessionLow+" | session high: "+r.sessionHigh);
   lines.push("Up displacement: "+r.upDisp+" | down displacement: "+r.dnDisp+" | taker delta since sweep: "+(r.delta==null?"not live":r.delta.toFixed(2)));
