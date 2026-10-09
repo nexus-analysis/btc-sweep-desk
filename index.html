@@ -66,7 +66,7 @@
     <input id="funding" type="number" step="0.0001" value="0.0066"/>
     <label>Open interest, 24h change %</label>
     <input id="oi" type="number" step="0.1" value="-2.69"/>
-    <p class="note">ETF in US$ millions. Edit these. Candles refresh from OKX. Two outflow days lean short. Two inflow days lean long.</p>
+    <p class="note">ETF in US$ millions, Farside, last completed US session. Filled automatically. Edit only if a print is revised.</p>
   </section>
   <section>
     <h2>4-hour chart</h2>
@@ -88,7 +88,7 @@
   </section>
 </main>
 <script>
-let data = { source:"OKX BTC-USDT", asof:"", daily:[], h4:[], etf:[["session 1",0],["session 2",0],["session 3",0],["session 4",0],["session 5",-239]] };
+let data = { source:"OKX BTC-USDT", asof:"", daily:[], h4:[], etf:[["02 Oct",189.9],["05 Oct",-89.8],["06 Oct",118.8],["07 Oct",-484.9],["08 Oct",-244.1]] };
 function money(n){ return Math.round(n).toLocaleString("en-US"); }
 function swings(candles, side){
   const out=[], idx=side==="low"?3:2;
@@ -180,8 +180,45 @@ function render(){
 }
 function etfForm(){
   const box=document.getElementById("etf");
-  box.innerHTML=data.etf.map((e,i)=>`<div class="row"><label>ETF day ${i+1}, $m</label><input class="etf" type="number" step="0.1" value="${e[1]}"/></div>`).join("");
+  box.innerHTML=data.etf.map((e)=>`<div class="row"><label>${e[0]} ETF, $m</label><input class="etf" type="number" step="0.1" value="${e[1]}"/></div>`).join("");
   box.querySelectorAll("input").forEach(el=>el.addEventListener("input", render));
+}
+function parseFarside(html){
+  const rows=[];
+  const re=/(\d{2} [A-Za-z]{3} 2026)([\s\S]*?)(?=\d{2} [A-Za-z]{3} 2026|Total)/g;
+  let m;
+  while((m=re.exec(html))){
+    const nums=[...m[2].matchAll(/\(?-?\d[\d,]*\.\d\)?/g)].map(x=>x[0]);
+    if(nums.length<2) continue;
+    const last=nums[nums.length-1].replace(/[(),]/g,"");
+    const neg=nums[nums.length-1].includes("(");
+    rows.push([m[1].slice(0,6), neg?-Number(last):Number(last)]);
+  }
+  return rows.slice(-5);
+}
+async function loadFlows(){
+  try{
+    const fr=await fetch("https://www.okx.com/api/v5/public/funding-rate?instId=BTC-USDT-SWAP").then(r=>r.json());
+    const rate=Number(fr.data[0].fundingRate)*100;
+    document.getElementById("funding").value=rate.toFixed(4);
+  }catch(e){}
+  try{
+    const oi=await fetch("https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-history?instId=BTC-USDT-SWAP&period=1H").then(r=>r.json());
+    const rows=oi.data||[];
+    if(rows.length>24){
+      const now=Number(rows[0][1]), then=Number(rows[24][1]);
+      document.getElementById("oi").value=(((now-then)/then)*100).toFixed(2);
+    }
+  }catch(e){}
+  try{
+    const raw=await fetch("https://api.allorigins.win/raw?url="+encodeURIComponent("https://farside.co.uk/btc/")).then(r=>r.text());
+    const rows=parseFarside(raw);
+    if(rows.length>=5){
+      data.etf=rows;
+      etfForm();
+      document.getElementById("asof").textContent=(document.getElementById("asof").textContent||"")+" · ETF live";
+    }
+  }catch(e){}
 }
 async function load(){
   const [h,d]=await Promise.all([
@@ -190,6 +227,7 @@ async function load(){
   ]);
   const map=rows=>rows.data.slice().reverse().map(r=>[+r[0],+r[1],+r[2],+r[3],+r[4],+r[5]]);
   data={...data, h4:map(h), daily:map(d), asof:new Date().toISOString().slice(0,16)+" UTC", source:"OKX live"};
+  await loadFlows();
   render();
 }
 document.getElementById("funding").addEventListener("input", render);
