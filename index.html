@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Sweep Desk — BTC spot</title>
+<style>
+  :root { --bg:#10140f; --panel:#181d16; --line:#2c3428; --ink:#e7ecdf; --muted:#9aa592; --skip:#e15a45; --watch:#e0b15a; --valid:#7dae6a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 "Segoe UI", Helvetica, Arial, sans-serif; }
+  header { display:flex; justify-content:space-between; gap:16px; align-items:flex-end; padding:22px 28px 14px; border-bottom:1px solid var(--line); }
+  h1 { font-size:22px; margin:0; font-weight:620; }
+  .sub { color:var(--muted); font-size:13px; margin-top:4px; }
+  .price b { font-size:28px; font-variant-numeric:tabular-nums; }
+  main { display:grid; grid-template-columns:320px 1fr 300px; gap:16px; padding:16px 20px 28px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  h2 { margin:0 0 10px; font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  .banner { grid-column:1 / -1; border-radius:12px; padding:16px 18px; display:flex; justify-content:space-between; gap:18px; align-items:center; border:1px solid var(--line); }
+  .banner.flat { background:#2a2416; border-color:#6d5a2c; }
+  .banner.long { background:#172318; border-color:#3d5c36; }
+  .banner.short { background:#2a1714; border-color:#6b332b; }
+  .call { font-size:28px; font-weight:680; letter-spacing:.04em; }
+  .banner p { margin:4px 0 0; max-width:780px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:8px 0 3px; }
+  input { width:100%; background:#10140f; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:7px 8px; font:inherit; }
+  .row { display:grid; grid-template-columns:1fr 90px; gap:8px; align-items:end; }
+  button { background:#243024; color:var(--ink); border:1px solid #3d4c38; border-radius:8px; padding:8px 12px; font:inherit; cursor:pointer; }
+  canvas { width:100%; height:340px; display:block; background:#121710; border-radius:8px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums; }
+  th, td { text-align:left; padding:6px 4px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); }
+  .ok { color:var(--valid); } .no { color:var(--skip); } .mid { color:var(--watch); }
+  ul { margin:8px 0 0; padding-left:18px; } li { margin:5px 0; }
+  .journal { grid-column:1 / -1; }
+  textarea { width:100%; min-height:72px; background:#10140f; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
+  .log { color:var(--muted); font-size:13px; white-space:pre-wrap; }
+  .note, .spot { color:var(--muted); font-size:12px; margin-top:8px; }
+  .spot { color:#d7c4a3; font-size:13px; }
+  @media (max-width:980px) { main { grid-template-columns:1fr; } .banner { flex-direction:column; align-items:flex-start; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Sweep Desk</h1>
+    <div class="sub">BTC swing, both sides. Spot can only buy. A short call means stay out or reduce.</div>
+  </div>
+  <div class="price"><b id="px">—</b><div class="sub" id="asof">loading</div></div>
+</header>
+<main>
+  <div class="banner flat" id="banner">
+    <div>
+      <div class="call" id="call">FLAT</div>
+      <p id="why">Loading candles…</p>
+      <div class="spot" id="spot"></div>
+    </div>
+    <button id="refresh">Refresh candles</button>
+  </div>
+  <section>
+    <h2>Regime inputs</h2>
+    <div id="etf"></div>
+    <label>Funding, % per 8h</label>
+    <input id="funding" type="number" step="0.0001" value="0.0066"/>
+    <label>Open interest, 24h change %</label>
+    <input id="oi" type="number" step="0.1" value="-2.69"/>
+    <p class="note">ETF in US$ millions. Edit these. Candles refresh from OKX. Two outflow days lean short. Two inflow days lean long.</p>
+  </section>
+  <section>
+    <h2>4-hour chart</h2>
+    <canvas id="chart" width="900" height="340"></canvas>
+    <p class="note">Gold line is the active pool. A wick through it is not the trade.</p>
+  </section>
+  <section><h2>Checklist</h2><ul id="checks"></ul></section>
+  <section>
+    <h2>Levels</h2>
+    <table><thead><tr><th>Pool</th><th>Price</th><th>State</th></tr></thead><tbody id="levels"></tbody></table>
+  </section>
+  <section><h2>Spot action</h2><div id="action"></div></section>
+  <section><h2>Both sides</h2><div class="note">Long: lows swept, 4-hour close back above, up displacement, then buy the retest. Short: highs swept, close back below, down displacement. On spot the short is not an order.</div></section>
+  <section class="journal">
+    <h2>Journal</h2>
+    <textarea id="note" placeholder="Optional note"></textarea>
+    <div style="margin-top:8px; display:flex; gap:8px;"><button id="save">Save today's line</button><button id="clear">Clear log</button></div>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+<script>
+let data = { source:"OKX BTC-USDT", asof:"", daily:[], h4:[], etf:[["session 1",0],["session 2",0],["session 3",0],["session 4",0],["session 5",-239]] };
+function money(n){ return Math.round(n).toLocaleString("en-US"); }
+function swings(candles, side){
+  const out=[], idx=side==="low"?3:2;
+  for(let i=2;i<candles.length-2;i++){
+    const v=candles[i][idx];
+    const hit=side==="low" ? v<=candles[i-1][idx]&&v<=candles[i-2][idx]&&v<=candles[i+1][idx]&&v<candles[i+2][idx] : v>=candles[i-1][idx]&&v>=candles[i-2][idx]&&v>=candles[i+1][idx]&&v>candles[i+2][idx];
+    if(hit) out.push({price:v, ts:candles[i][0]});
+  }
+  return out;
+}
+function equalPool(sw, name){
+  for(let i=sw.length-1;i>=1;i--){
+    const a=sw[i], b=sw[i-1], mid=(a.price+b.price)/2;
+    if(Math.abs(a.price-b.price)/mid<=0.005 && (a.ts-b.ts)<18*86400000) return {name, price:name.includes("low")?Math.min(a.price,b.price):Math.max(a.price,b.price)};
+  }
+  return null;
+}
+function atr(candles){
+  const slice=candles.slice(-15); let s=0;
+  for(let i=1;i<slice.length;i++){ const h=slice[i][2], l=slice[i][3], pc=slice[i-1][4]; s+=Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)); }
+  return s/(slice.length-1);
+}
+function mark(pool, side, extreme, price, a){
+  const swept=side==="low" ? extreme<pool.price*0.997 : extreme>pool.price*1.003;
+  const reclaimed=side==="low" ? price>pool.price : price<pool.price;
+  const depth=side==="low" ? (pool.price-extreme)/pool.price : (extreme-pool.price)/pool.price;
+  let state="intact";
+  if(swept&&reclaimed) state="swept + reclaimed";
+  else if(swept) state="broken, not reclaimed";
+  else if(side==="low"?price<pool.price:price>pool.price) state="beyond";
+  return {...pool, side, depth, swept, reclaimed, state, deep:depth>=0.003 || Math.abs(pool.price-extreme)>=0.5*a};
+}
+function analyze(){
+  if(!data.h4.length) return null;
+  const daily=data.daily, h4=data.h4, price=h4[h4.length-1][4], done=daily.slice(0,-1), prior=done[done.length-1], week=done.slice(-12,-5);
+  const sessionLow=Math.min(daily.at(-1)[3], daily.at(-2)[3]), sessionHigh=Math.max(daily.at(-1)[2], daily.at(-2)[2]), a=atr(h4);
+  const lows=[{name:"Prior daily low", price:prior[3]},{name:"Prior week low", price:Math.min(...week.map(c=>c[3]))}];
+  const highs=[{name:"Prior daily high", price:prior[2]},{name:"Prior week high", price:Math.max(...week.map(c=>c[2]))}];
+  const eqL=equalPool(swings(done,"low"),"Equal lows"), eqH=equalPool(swings(done,"high"),"Equal highs");
+  if(eqL) lows.push(eqL); if(eqH) highs.push(eqH);
+  const lowStates=lows.map(p=>mark(p,"low",sessionLow,price,a)), highStates=highs.map(p=>mark(p,"high",sessionHigh,price,a));
+  const bodies=h4.slice(-8,-1).map(c=>Math.abs(c[4]-c[1])), avg=bodies.reduce((s,x)=>s+x,0)/bodies.length;
+  const upDisp=h4.slice(-3).some(c=>(c[4]-c[1])>1.2*avg && c[4]>c[1]);
+  const dnDisp=h4.slice(-3).some(c=>(c[1]-c[4])>1.2*avg && c[4]<c[1]);
+  const etf=[...document.querySelectorAll(".etf")].map(el=>Number(el.value)||0);
+  const lastTwo=etf.slice(-2), outflows=lastTwo.length===2&&lastTwo.every(v=>v<0), inflows=lastTwo.length===2&&lastTwo.every(v=>v>0);
+  const five=etf.slice(-5).reduce((s,v)=>s+v,0), funding=Number(document.getElementById("funding").value), oi=Number(document.getElementById("oi").value);
+  const longReady=lowStates.find(s=>s.swept&&s.reclaimed&&s.deep), shortReady=highStates.find(s=>s.swept&&s.reclaimed&&s.deep);
+  const longBroken=lowStates.find(s=>s.swept&&!s.reclaimed), shortBroken=highStates.find(s=>s.swept&&!s.reclaimed);
+  let call="FLAT", tone="flat", why="No pool has been swept. Location only.", spot="Spot: nothing to do.", action="Mark equal lows and equal highs. Alert just beyond them.", active=longBroken||shortBroken||longReady||shortReady;
+  if(longReady&&upDisp&&!outflows&&funding<0.03){
+    call=five<0?"LONG · HALF":"LONG"; tone="long"; why="Sell-side pool swept and reclaimed, with up displacement. Buy the retest, not the wick."; spot="Spot: long is allowed."; action="Limit buy on the first retest. Stop beyond the sweep low. Risk 0.5%, or 0.25% if five-day ETF flow is negative."; active=longReady;
+  } else if(shortReady&&dnDisp&&!inflows&&funding>-0.03){
+    call=five>0?"SHORT · HALF":"SHORT"; tone="short"; why="Buy-side pool swept and reclaimed back below, with down displacement."; spot="Spot: do not buy. If you are long, reduce or exit. A spot account cannot open this short."; action="Stay flat on spot. The short is the directional read only."; active=shortReady;
+  } else if(longBroken){
+    call="SHORT BIAS"; tone="short"; why="Price broke "+longBroken.name.toLowerCase()+" at "+money(longBroken.price)+" and has not closed back above it. That is a failed low, not a long."; spot="Spot: no buy. Do not treat the bounce as the entry."; action="Alert on a 4-hour close back above "+money(longBroken.price)+" before any long."; active=longBroken;
+  } else if(shortBroken){
+    call="LONG BIAS"; tone="long"; why="Price broke "+shortBroken.name.toLowerCase()+" and has not closed back below it. Not a short."; spot="Spot: do not sell into this."; action="No long until a low is swept and reclaimed. No short while the high remains broken."; active=shortBroken;
+  } else if(longReady||shortReady){
+    why="A sweep reclaimed, but displacement or the flow filter is missing."; spot="Spot: wait."; action="No order until the displacement candle prints in the reversal direction."; active=longReady||shortReady;
+  }
+  return {price, sessionLow, sessionHigh, lowStates, highStates, call, tone, why, spot, action, active, outflows, inflows, five, funding, oi, upDisp, dnDisp};
+}
+function draw(r){
+  const c=document.getElementById("chart"), g=c.getContext("2d"), w=c.width, h=c.height;
+  g.clearRect(0,0,w,h);
+  const candles=data.h4.slice(-70), pad=28;
+  let lo=Math.min(...candles.map(x=>x[3])), hi=Math.max(...candles.map(x=>x[2]));
+  if(r.active){ lo=Math.min(lo,r.active.price); hi=Math.max(hi,r.active.price); }
+  lo*=0.998; hi*=1.002;
+  const x=i=>pad+(i+0.5)*((w-pad*2)/candles.length), y=p=>pad+(hi-p)/(hi-lo)*(h-pad*2);
+  if(r.active){ g.setLineDash([5,4]); g.strokeStyle="#d7c4a3"; g.beginPath(); g.moveTo(pad,y(r.active.price)); g.lineTo(w-pad,y(r.active.price)); g.stroke(); g.setLineDash([]); g.fillStyle="#d7c4a3"; g.font="12px sans-serif"; g.fillText(r.active.name+"  "+money(r.active.price), pad, y(r.active.price)-6); }
+  candles.forEach((cd,i)=>{ const up=cd[4]>=cd[1]; g.strokeStyle=up?"#7dae6a":"#e15a45"; g.fillStyle=g.strokeStyle; g.beginPath(); g.moveTo(x(i),y(cd[2])); g.lineTo(x(i),y(cd[3])); g.stroke(); const top=y(Math.max(cd[1],cd[4])), bot=y(Math.min(cd[1],cd[4])); g.fillRect(x(i)-3, top, 6, Math.max(1, bot-top)); });
+}
+function render(){
+  const r=analyze();
+  if(!r){ document.getElementById("why").textContent="No candles yet."; return null; }
+  document.getElementById("px").textContent="$"+money(r.price);
+  document.getElementById("asof").textContent=data.asof+" · "+data.source;
+  document.getElementById("banner").className="banner "+r.tone;
+  document.getElementById("call").textContent=r.call;
+  document.getElementById("why").textContent=r.why;
+  document.getElementById("spot").textContent=r.spot;
+  document.getElementById("action").textContent=r.action;
+  document.getElementById("levels").innerHTML=[...r.lowStates,...r.highStates].map(s=>`<tr><td>${s.name}</td><td>${money(s.price)}</td><td class="${s.state.includes("reclaimed")?"ok":s.state.includes("broken")?"no":"mid"}">${s.state}</td></tr>`).join("")+`<tr><td>Session low / high</td><td>${money(r.sessionLow)} / ${money(r.sessionHigh)}</td><td>extremes</td></tr>`;
+  const checks=[["Two-day ETF outflows", r.outflows?"yes — short lean":"no", !r.outflows],["Two-day ETF inflows", r.inflows?"yes — long lean":"no", r.inflows],["5-session ETF net",(r.five>=0?"+":"")+r.five.toFixed(1)+"M", r.five>=0],["Funding", r.funding.toFixed(4)+"%", Math.abs(r.funding)<0.03],["Low swept and reclaimed", r.lowStates.some(s=>s.swept&&s.reclaimed)?"yes":"no", r.lowStates.some(s=>s.swept&&s.reclaimed)],["High swept and reclaimed", r.highStates.some(s=>s.swept&&s.reclaimed)?"yes":"no", r.highStates.some(s=>s.swept&&s.reclaimed)],["Up displacement", r.upDisp?"yes":"no", r.upDisp],["Down displacement", r.dnDisp?"yes":"no", r.dnDisp]];
+  document.getElementById("checks").innerHTML=checks.map(([k,v,ok])=>`<li><b class="${ok?"ok":"no"}">${v}</b> — ${k}</li>`).join("");
+  draw(r); return r;
+}
+function etfForm(){
+  const box=document.getElementById("etf");
+  box.innerHTML=data.etf.map((e,i)=>`<div class="row"><label>ETF day ${i+1}, $m</label><input class="etf" type="number" step="0.1" value="${e[1]}"/></div>`).join("");
+  box.querySelectorAll("input").forEach(el=>el.addEventListener("input", render));
+}
+async function load(){
+  const [h,d]=await Promise.all([
+    fetch("https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=4H&limit=160").then(r=>r.json()),
+    fetch("https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=1D&limit=90").then(r=>r.json())
+  ]);
+  const map=rows=>rows.data.slice().reverse().map(r=>[+r[0],+r[1],+r[2],+r[3],+r[4],+r[5]]);
+  data={...data, h4:map(h), daily:map(d), asof:new Date().toISOString().slice(0,16)+" UTC", source:"OKX live"};
+  render();
+}
+document.getElementById("funding").addEventListener("input", render);
+document.getElementById("oi").addEventListener("input", render);
+document.getElementById("refresh").onclick=()=>load().catch(()=>{ document.getElementById("asof").textContent="OKX blocked in this browser."; });
+document.getElementById("save").onclick=()=>{ const r=render(); const line=`${new Date().toISOString().slice(0,16)} | ${r?r.call:"—"} | ${document.getElementById("note").value.trim()}`; localStorage.setItem("sweepdesk-log",(line+"\n"+(localStorage.getItem("sweepdesk-log")||"")).trim()); document.getElementById("note").value=""; document.getElementById("log").textContent=localStorage.getItem("sweepdesk-log"); };
+document.getElementById("clear").onclick=()=>{ localStorage.removeItem("sweepdesk-log"); document.getElementById("log").textContent="No lines yet."; };
+document.getElementById("log").textContent=localStorage.getItem("sweepdesk-log")||"No lines yet.";
+etfForm();
+load().catch(()=>{ document.getElementById("why").textContent="Could not load OKX candles. Open the file from a local server, or press Refresh."; });
+</script>
+</body>
+</html>
